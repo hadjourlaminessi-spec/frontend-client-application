@@ -56,10 +56,43 @@ stages:
         customCommand: 'run lint'
 
 # ─────────────────────────────────────────────
-# STAGE 3 : Unit Tests
+# STAGE 3 : OWASP Dependency Audit (npm audit)
+# ─────────────────────────────────────────────
+- stage: OWASPAudit
+  displayName: 'OWASP – Dependency Audit'
+  dependsOn: Lint
+  jobs:
+  - job: AuditJob
+    displayName: 'npm audit'
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '20.x'
+
+    - task: Npm@1
+      inputs:
+        command: install
+
+    - script: npm audit --audit-level=critical
+      displayName: 'npm audit (fail on CRITICAL)'
+
+    - script: |
+        npm audit --json > $(Build.ArtifactStagingDirectory)/npm-audit-report.json || true
+      displayName: 'npm audit - Export JSON Report'
+      condition: always()
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Artifact - npm-audit-report.json'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/npm-audit-report.json'
+        ArtifactName: 'npm-audit-report'
+
+# ─────────────────────────────────────────────
+# STAGE 4 : Unit Tests
 # ─────────────────────────────────────────────
 - stage: UnitTests
-  dependsOn: Lint
+  dependsOn: OWASPAudit
   jobs:
   - job: UnitTestsJob
     steps:
@@ -93,11 +126,56 @@ stages:
         ArtifactName: 'coverage-report'
 
 # ─────────────────────────────────────────────
-# STAGE 4 : Mutation Tests (Stryker)
+# STAGE 5 : Integration Tests
+# ─────────────────────────────────────────────
+- stage: IntegrationTests
+  displayName: 'Integration Tests'
+  dependsOn: UnitTests
+  jobs:
+  - job: IntegrationTestsJob
+    displayName: 'Run Integration Tests'
+    steps:
+    - task: NodeTool@0
+      displayName: 'Use Node.js 20.x'
+      inputs:
+        versionSpec: '20.x'
+
+    - task: Npm@1
+      displayName: 'npm install'
+      inputs:
+        command: install
+
+    - task: Npm@1
+      displayName: 'Run Integration Tests'
+      inputs:
+        command: custom
+        customCommand: 'test -- --ci --coverage --testPathPattern=__tests__/integration --reporters=default --reporters=jest-junit'
+      env:
+        CI: 'true'
+        JEST_JUNIT_OUTPUT_DIR: '$(System.DefaultWorkingDirectory)/test-results-integration'
+        JEST_JUNIT_OUTPUT_NAME: 'junit-integration.xml'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Integration Test Results'
+      condition: always()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: '**/test-results-integration/junit-integration.xml'
+        testRunTitle: 'Integration Tests'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Artifact - integration coverage'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/coverage'
+        ArtifactName: 'coverage-report-integration'
+
+# ─────────────────────────────────────────────
+# STAGE 6 : Mutation Tests (Stryker)
 # ─────────────────────────────────────────────
 - stage: MutationTests
   displayName: 'Mutation Tests'
-  dependsOn: UnitTests
+  dependsOn: IntegrationTests
   jobs:
   - job: MutationTestsJob
     displayName: 'Run Mutation Tests'
@@ -126,44 +204,11 @@ stages:
         ArtifactName: 'mutation-test-report'
 
 # ─────────────────────────────────────────────
-# STAGE 5 : Dependency Audit (npm audit)
-# ─────────────────────────────────────────────
-- stage: DependencyAudit
-  displayName: 'Dependency Audit'
-  dependsOn: MutationTests
-  jobs:
-  - job: AuditJob
-    displayName: 'npm audit'
-    steps:
-    - task: NodeTool@0
-      inputs:
-        versionSpec: '20.x'
-
-    - task: Npm@1
-      inputs:
-        command: install
-
-    - script: npm audit --audit-level=high
-      displayName: 'npm audit (fail on HIGH/CRITICAL)'
-
-    - script: |
-        npm audit --json > $(Build.ArtifactStagingDirectory)/npm-audit-report.json || true
-      displayName: 'npm audit - Export JSON Report'
-      condition: always()
-
-    - task: PublishBuildArtifacts@1
-      displayName: 'Artifact - npm-audit-report.json'
-      condition: always()
-      inputs:
-        PathtoPublish: '$(Build.ArtifactStagingDirectory)/npm-audit-report.json'
-        ArtifactName: 'npm-audit-report'
-
-# ─────────────────────────────────────────────
-# STAGE 6 : SonarQube (CLI version)
+# STAGE 7 : SonarQube (CLI version)
 # ─────────────────────────────────────────────
 - stage: Sonar
   displayName: 'SonarQube Analysis'
-  dependsOn: DependencyAudit
+  dependsOn: MutationTests
   jobs:
   - job: SonarJob
     displayName: 'Sonar Scan'
@@ -172,9 +217,15 @@ stages:
       fetchDepth: 0
 
     - task: DownloadBuildArtifacts@1
-      displayName: 'Download coverage report'
+      displayName: 'Download unit test coverage'
       inputs:
         artifactName: 'coverage-report'
+        downloadPath: '$(System.DefaultWorkingDirectory)'
+
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download integration test coverage'
+      inputs:
+        artifactName: 'coverage-report-integration'
         downloadPath: '$(System.DefaultWorkingDirectory)'
 
     - task: NodeTool@0
@@ -194,10 +245,11 @@ stages:
 
     - script: |
         ls -la $(System.DefaultWorkingDirectory)/coverage-report/
+        ls -la $(System.DefaultWorkingDirectory)/coverage-report-integration/
         sonar-scanner \
           -Dsonar.host.url=$SONAR_HOST_URL \
           -Dsonar.token=$SONAR_TOKEN \
-          -Dsonar.javascript.lcov.reportPaths=$(System.DefaultWorkingDirectory)/coverage-report/lcov.info \
+          -Dsonar.javascript.lcov.reportPaths=$(System.DefaultWorkingDirectory)/coverage-report/lcov.info,$(System.DefaultWorkingDirectory)/coverage-report-integration/lcov.info \
           -Dsonar.qualitygate.wait=true
       displayName: 'SonarQube Scan'
       env:
@@ -205,7 +257,7 @@ stages:
         SONAR_TOKEN: $(SONAR_TOKEN)
 
 # ─────────────────────────────────────────────
-# STAGE 6 : Docker Build
+# STAGE 8 : Docker Build
 # ─────────────────────────────────────────────
 - stage: DockerBuild
   displayName: 'Docker Build (multi-platform OCI)'
@@ -237,7 +289,7 @@ stages:
         ArtifactName: 'docker-image'
 
 # ─────────────────────────────────────────────
-# STAGE 8 : Trivy Security Scan
+# STAGE 9 : Trivy Security Scan
 # ─────────────────────────────────────────────
 - stage: Trivy
   displayName: 'Trivy Security Scan'
@@ -287,7 +339,7 @@ stages:
         ArtifactName: 'trivy-report'
 
 # ─────────────────────────────────────────────
-# STAGE 9 : Push → ACR
+# STAGE 10 : Push → ACR
 # ─────────────────────────────────────────────
 - stage: Push
   displayName: 'Push to ACR'
@@ -322,7 +374,7 @@ stages:
             docker://$(IMAGE)
 
 # ─────────────────────────────────────────────
-# STAGE 10 : Push Helm chart → ACR (OCI)
+# STAGE 11 : Push Helm chart → ACR (OCI)
 # ─────────────────────────────────────────────
 - stage: HelmPush
   displayName: 'Push Helm Chart'
