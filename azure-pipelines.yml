@@ -73,8 +73,8 @@ stages:
       inputs:
         command: install
 
-    - script: npm audit --audit-level=critical
-      displayName: 'npm audit (fail on CRITICAL)'
+    - script: npm audit --audit-level=high
+      displayName: 'npm audit (fail on HIGH/CRITICAL)'
 
     - script: |
         npm audit --json > $(Build.ArtifactStagingDirectory)/npm-audit-report.json || true
