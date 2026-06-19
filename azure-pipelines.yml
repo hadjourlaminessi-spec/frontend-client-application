@@ -107,7 +107,7 @@ stages:
     - task: Npm@1
       inputs:
         command: custom
-        customCommand: 'test -- --ci --reporters=default --reporters=jest-junit'
+        customCommand: 'test -- --ci --testPathIgnorePatterns=__tests__/integration --coverage --coverageThreshold="{}" --reporters=default --reporters=jest-junit'
       env:
         CI: 'true'
         JEST_JUNIT_OUTPUT_DIR: '$(System.DefaultWorkingDirectory)/test-results'
@@ -149,7 +149,7 @@ stages:
       displayName: 'Run Integration Tests'
       inputs:
         command: custom
-        customCommand: 'test -- --ci --coverage --testPathPattern=__tests__/integration --reporters=default --reporters=jest-junit'
+        customCommand: 'test -- --ci --testPathPattern=__tests__/integration --coverage --coverageThreshold="{}" --reporters=default --reporters=jest-junit'
       env:
         CI: 'true'
         JEST_JUNIT_OUTPUT_DIR: '$(System.DefaultWorkingDirectory)/test-results-integration'
@@ -217,15 +217,9 @@ stages:
       fetchDepth: 0
 
     - task: DownloadBuildArtifacts@1
-      displayName: 'Download unit test coverage'
+      displayName: 'Download coverage report'
       inputs:
         artifactName: 'coverage-report'
-        downloadPath: '$(System.DefaultWorkingDirectory)'
-
-    - task: DownloadBuildArtifacts@1
-      displayName: 'Download integration test coverage'
-      inputs:
-        artifactName: 'coverage-report-integration'
         downloadPath: '$(System.DefaultWorkingDirectory)'
 
     - task: NodeTool@0
@@ -245,11 +239,10 @@ stages:
 
     - script: |
         ls -la $(System.DefaultWorkingDirectory)/coverage-report/
-        ls -la $(System.DefaultWorkingDirectory)/coverage-report-integration/
         sonar-scanner \
           -Dsonar.host.url=$SONAR_HOST_URL \
           -Dsonar.token=$SONAR_TOKEN \
-          -Dsonar.javascript.lcov.reportPaths=$(System.DefaultWorkingDirectory)/coverage-report/lcov.info,$(System.DefaultWorkingDirectory)/coverage-report-integration/lcov.info \
+          -Dsonar.javascript.lcov.reportPaths=$(System.DefaultWorkingDirectory)/coverage-report/lcov.info \
           -Dsonar.qualitygate.wait=true
       displayName: 'SonarQube Scan'
       env:
