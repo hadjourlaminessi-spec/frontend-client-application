@@ -46,7 +46,15 @@ stages:
       inputs:
         versionSpec: '20.x'
 
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
+
     - task: Npm@1
+      condition: ne(variables.CACHE_RESTORED, 'true')
       inputs:
         command: install
 
@@ -60,7 +68,7 @@ stages:
 # ─────────────────────────────────────────────
 - stage: OWASPAudit
   displayName: 'OWASP – Dependency Audit'
-  dependsOn: Lint
+  dependsOn: Gitleaks
   jobs:
   - job: AuditJob
     displayName: 'npm audit'
@@ -69,7 +77,15 @@ stages:
       inputs:
         versionSpec: '20.x'
 
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
+
     - task: Npm@1
+      condition: ne(variables.CACHE_RESTORED, 'true')
       inputs:
         command: install
 
@@ -92,7 +108,9 @@ stages:
 # STAGE 4 : Unit Tests
 # ─────────────────────────────────────────────
 - stage: UnitTests
-  dependsOn: OWASPAudit
+  dependsOn:
+  - Lint
+  - OWASPAudit
   jobs:
   - job: UnitTestsJob
     steps:
@@ -100,7 +118,15 @@ stages:
       inputs:
         versionSpec: '20.x'
 
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
+
     - task: Npm@1
+      condition: ne(variables.CACHE_RESTORED, 'true')
       inputs:
         command: install
 
@@ -130,7 +156,9 @@ stages:
 # ─────────────────────────────────────────────
 - stage: IntegrationTests
   displayName: 'Integration Tests'
-  dependsOn: UnitTests
+  dependsOn:
+  - Lint
+  - OWASPAudit
   jobs:
   - job: IntegrationTestsJob
     displayName: 'Run Integration Tests'
@@ -140,8 +168,16 @@ stages:
       inputs:
         versionSpec: '20.x'
 
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
+
     - task: Npm@1
       displayName: 'npm install'
+      condition: ne(variables.CACHE_RESTORED, 'true')
       inputs:
         command: install
 
@@ -175,7 +211,9 @@ stages:
 # ─────────────────────────────────────────────
 - stage: MutationTests
   displayName: 'Mutation Tests'
-  dependsOn: IntegrationTests
+  dependsOn:
+  - UnitTests
+  - IntegrationTests
   jobs:
   - job: MutationTestsJob
     displayName: 'Run Mutation Tests'
@@ -185,8 +223,16 @@ stages:
       inputs:
         versionSpec: '20.x'
 
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
+
     - task: Npm@1
       displayName: 'npm install'
+      condition: ne(variables.CACHE_RESTORED, 'true')
       inputs:
         command: install
 
@@ -232,8 +278,16 @@ stages:
         command: custom
         customCommand: 'install -g sonarqube-scanner'
 
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
+
     - task: Npm@1
       displayName: 'npm install'
+      condition: ne(variables.CACHE_RESTORED, 'true')
       inputs:
         command: install
 
@@ -266,11 +320,22 @@ stages:
         echo "##vso[task.setvariable variable=SHORT_SHA]$SHORT_SHA"
       displayName: 'Set SHORT_SHA'
 
+    - task: AzureCLI@2
+      displayName: 'ACR Login (for buildx cache)'
+      inputs:
+        azureSubscription: 'sc-formation-devops-acr'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login --name crformation
+
     - script: |
         docker buildx create --use --name multiplatform
         docker buildx build \
           --platform linux/amd64,linux/arm64 \
           --tag $(IMAGE) \
+          --cache-from type=registry,ref=crformation.azurecr.io/devops-formation-frontend:buildcache \
+          --cache-to type=registry,ref=crformation.azurecr.io/devops-formation-frontend:buildcache,mode=max \
           --output type=oci,dest=$(Build.ArtifactStagingDirectory)/image.tar \
           .
       displayName: 'Docker Buildx Build → OCI tar'
@@ -304,25 +369,22 @@ stages:
         artifactName: 'docker-image'
         downloadPath: '$(Build.ArtifactStagingDirectory)'
 
-    - script: docker load -i $(Build.ArtifactStagingDirectory)/docker-image/image.tar
-      displayName: 'Docker Load Image'
-
     - script: |
         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
           | sh -s -- -b /usr/local/bin
         trivy image \
+          --input $(Build.ArtifactStagingDirectory)/docker-image/image.tar \
           --severity HIGH,CRITICAL \
           --no-progress \
           --format json \
-          --output $(Build.ArtifactStagingDirectory)/trivy-report.json \
-          $(IMAGE)
+          --output $(Build.ArtifactStagingDirectory)/trivy-report.json
         trivy image \
+          --input $(Build.ArtifactStagingDirectory)/docker-image/image.tar \
           --exit-code 1 \
           --severity HIGH,CRITICAL \
           --no-progress \
-          --format table \
-          $(IMAGE)
-      displayName: 'Trivy - Scan (fail on HIGH/CRITICAL)'
+          --format table
+      displayName: 'Trivy - Scan OCI archive (fail on HIGH/CRITICAL)'
 
     - task: PublishBuildArtifacts@1
       displayName: 'Artifact - trivy-report.json'
