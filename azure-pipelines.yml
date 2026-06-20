@@ -145,6 +145,12 @@ stages:
         testResultsFormat: JUnit
         testResultsFiles: '**/test-results/junit.xml'
 
+    - task: PublishCodeCoverageResults@2
+      displayName: 'Publish Unit Test Coverage'
+      condition: always()
+      inputs:
+        summaryFileLocation: '$(System.DefaultWorkingDirectory)/coverage/cobertura-coverage.xml'
+
     - task: PublishBuildArtifacts@1
       condition: always()
       inputs:

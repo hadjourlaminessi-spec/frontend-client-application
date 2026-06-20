@@ -61,7 +61,7 @@
       "src/lib/cart.tsx",
       "src/lib/config.ts"
     ],
-    "coverageReporters": ["text", "lcov", "html"],
+    "coverageReporters": ["text", "lcov", "html", "cobertura"],
     "coverageThreshold": {
       "global": {
         "branches": 80,
