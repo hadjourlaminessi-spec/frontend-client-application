@@ -4,13 +4,7 @@ import type { Product, CreateProductPayload } from "../../types/api";
 import { CATEGORIES } from "../../lib/constants";
 import { AlertIcon, BoxIcon, CrossIcon } from "../icons";
 import { hasRole } from "../../services/keycloak";
-
-function fmt(n: number) {
-  return new Intl.NumberFormat("fr-FR", {
-    style: "currency",
-    currency: "EUR",
-  }).format(n);
-}
+import { fmt } from "../../lib/formatters";
 
 export default function AdminProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);

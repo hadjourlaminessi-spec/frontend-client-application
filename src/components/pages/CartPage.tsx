@@ -5,13 +5,7 @@ import CardIcon from "../icons/CardIcon";
 import SpinnerIcon from "../icons/SpinnerIcon";
 import CrossIcon from "../icons/CrossIcon";
 import { AlertIcon, BoxIcon } from "../icons";
-
-function fmt(n: number) {
-  return new Intl.NumberFormat("fr-FR", {
-    style: "currency",
-    currency: "EUR",
-  }).format(n);
-}
+import { fmt } from "../../lib/formatters";
 
 interface Props {
   goToOrders: (id?: string) => void;

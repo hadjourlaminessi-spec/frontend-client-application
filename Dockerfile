@@ -2,8 +2,8 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 ENV NODE_ENV=development
 COPY . .
 RUN npm run build
@@ -11,8 +11,8 @@ RUN npm run build
 # ── Stage 2: serve ─────────────────────────────────────────────
 FROM nginx:alpine AS runner
 
-# Install gettext for envsubst
-RUN apk add --no-cache gettext
+# Update base packages (fix CVEs) + install gettext for envsubst
+RUN apk upgrade --no-cache && apk add --no-cache gettext
 ENV NODE_ENV=development
 COPY --from=builder /app/build /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf

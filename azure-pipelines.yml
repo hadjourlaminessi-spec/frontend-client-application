@@ -1,37 +1,468 @@
 trigger:
-  branches:
-    include:
-      - '*'
+- main
 
 pr:
   branches:
     include:
-      - '*'
+    - '*'
 
 pool:
   vmImage: ubuntu-latest
 
-jobs:
-  - job: checkout_metadata
-    displayName: Checkout & Export Metadata
+variables:
+- group: variable
+- name: BRANCH_SLUG
+  value: $[replace(variables['Build.SourceBranchName'], '/', '-')]
+
+stages:
+
+# ─────────────────────────────────────────────
+# STAGE 1 : Install & Lint
+# ─────────────────────────────────────────────
+- stage: Lint
+  jobs:
+  - job: LintJob
     steps:
-      - checkout: self
-        fetchDepth: 0
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '20.x'
 
-      - bash: |
-          SHORT_SHA=$(git rev-parse --short=7 HEAD)
-          RAW_BRANCH="${BUILD_SOURCEBRANCH}"
-          # Strip refs/heads/ or refs/pull/.../merge
-          BRANCH_NAME="${RAW_BRANCH#refs/heads/}"
-          BRANCH_NAME="${BRANCH_NAME#refs/pull/}"
-          BRANCH_NAME="${BRANCH_NAME%/merge}"
-          # Slugify: lowercase, replace non-alphanumeric with dash, trim dashes
-          BRANCH_SLUG=$(echo "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
 
-          echo "##vso[task.setvariable variable=SHORT_SHA;isOutput=true]$SHORT_SHA"
-          echo "##vso[task.setvariable variable=BRANCH_SLUG;isOutput=true]$BRANCH_SLUG"
+    - task: Npm@1
+      condition: ne(variables.CACHE_RESTORED, 'true')
+      inputs:
+        command: install
 
-          echo "SHORT_SHA  : $SHORT_SHA"
-          echo "BRANCH_SLUG: $BRANCH_SLUG"
-        name: set_metadata
-        displayName: Compute and export SHORT_SHA & BRANCH_SLUG
+    - task: Npm@1
+      inputs:
+        command: custom
+        customCommand: 'run lint'
+
+# ─────────────────────────────────────────────
+# STAGE 2 : Gitleaks (Marketplace)
+# ─────────────────────────────────────────────
+- stage: Gitleaks
+  displayName: 'Gitleaks – Secret Scanning'
+  dependsOn: Lint
+  jobs:
+  - job: GitleaksJob
+    steps:
+    - checkout: self
+      fetchDepth: 0
+
+    - task: Gitleaks@3
+      inputs:
+        scanlocation: '$(Build.SourcesDirectory)'
+        configtype: 'predefined'
+        predefinedconfigfile: 'GitleaksUdmCombo.toml'
+        reportformat: 'sarif'
+
+# ─────────────────────────────────────────────
+# STAGE 3 : OWASP Dependency Audit (npm audit)
+# ─────────────────────────────────────────────
+- stage: OWASPAudit
+  displayName: 'OWASP – Dependency Audit'
+  dependsOn: Lint
+  jobs:
+  - job: AuditJob
+    displayName: 'npm audit'
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '20.x'
+
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
+
+    - task: Npm@1
+      condition: ne(variables.CACHE_RESTORED, 'true')
+      inputs:
+        command: install
+
+    - script: npm audit --audit-level=high
+      displayName: 'npm audit (fail on HIGH/CRITICAL)'
+
+    - script: |
+        npm audit --json > $(Build.ArtifactStagingDirectory)/npm-audit-report.json || true
+      displayName: 'npm audit - Export JSON Report'
+      condition: always()
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Artifact - npm-audit-report.json'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/npm-audit-report.json'
+        ArtifactName: 'npm-audit-report'
+
+# ─────────────────────────────────────────────
+# STAGE 4 : Unit Tests
+# ─────────────────────────────────────────────
+- stage: UnitTests
+  dependsOn:
+  - Lint
+  - OWASPAudit
+  jobs:
+  - job: UnitTestsJob
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '20.x'
+
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
+
+    - task: Npm@1
+      condition: ne(variables.CACHE_RESTORED, 'true')
+      inputs:
+        command: install
+
+    - task: Npm@1
+      inputs:
+        command: custom
+        customCommand: 'test -- --ci --testPathIgnorePatterns=__tests__/integration --coverage --coverageThreshold="{}" --reporters=default --reporters=jest-junit'
+      env:
+        CI: 'true'
+        JEST_JUNIT_OUTPUT_DIR: '$(System.DefaultWorkingDirectory)/test-results'
+        JEST_JUNIT_OUTPUT_NAME: 'junit.xml'
+
+    - task: PublishTestResults@2
+      condition: always()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: '**/test-results/junit.xml'
+
+    - task: PublishCodeCoverageResults@2
+      displayName: 'Publish Unit Test Coverage'
+      condition: always()
+      inputs:
+        summaryFileLocation: '$(System.DefaultWorkingDirectory)/coverage/cobertura-coverage.xml'
+
+    - task: PublishBuildArtifacts@1
+      condition: always()
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/coverage'
+        ArtifactName: 'coverage-report'
+
+# ─────────────────────────────────────────────
+# STAGE 5 : Integration Tests
+# ─────────────────────────────────────────────
+- stage: IntegrationTests
+  displayName: 'Integration Tests'
+  dependsOn:
+  - Lint
+  - OWASPAudit
+  jobs:
+  - job: IntegrationTestsJob
+    displayName: 'Run Integration Tests'
+    steps:
+    - task: NodeTool@0
+      displayName: 'Use Node.js 20.x'
+      inputs:
+        versionSpec: '20.x'
+
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
+
+    - task: Npm@1
+      displayName: 'npm install'
+      condition: ne(variables.CACHE_RESTORED, 'true')
+      inputs:
+        command: install
+
+    - task: Npm@1
+      displayName: 'Run Integration Tests'
+      inputs:
+        command: custom
+        customCommand: 'test -- --ci --testPathPattern=__tests__/integration --coverage --coverageThreshold="{}" --reporters=default --reporters=jest-junit'
+      env:
+        CI: 'true'
+        JEST_JUNIT_OUTPUT_DIR: '$(System.DefaultWorkingDirectory)/test-results-integration'
+        JEST_JUNIT_OUTPUT_NAME: 'junit-integration.xml'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Integration Test Results'
+      condition: always()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: '**/test-results-integration/junit-integration.xml'
+        testRunTitle: 'Integration Tests'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Artifact - integration coverage'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/coverage'
+        ArtifactName: 'coverage-report-integration'
+
+# ─────────────────────────────────────────────
+# STAGE 6 : Mutation Tests (Stryker)
+# ─────────────────────────────────────────────
+- stage: MutationTests
+  displayName: 'Mutation Tests'
+  dependsOn:
+  - UnitTests
+  - IntegrationTests
+  jobs:
+  - job: MutationTestsJob
+    displayName: 'Run Mutation Tests'
+    steps:
+    - task: NodeTool@0
+      displayName: 'Use Node.js 20.x'
+      inputs:
+        versionSpec: '20.x'
+
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
+
+    - task: Npm@1
+      displayName: 'npm install'
+      condition: ne(variables.CACHE_RESTORED, 'true')
+      inputs:
+        command: install
+
+    - task: Npm@1
+      displayName: 'Stryker - Mutation Testing'
+      inputs:
+        command: custom
+        customCommand: 'run mutation-test -- --incremental'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Artifact - stryker-report'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/reports/mutation/mutation.html'
+        ArtifactName: 'mutation-test-report'
+
+# ─────────────────────────────────────────────
+# STAGE 7 : SonarQube (CLI version)
+# ─────────────────────────────────────────────
+- stage: Sonar
+  displayName: 'SonarQube Analysis'
+  dependsOn: MutationTests
+  jobs:
+  - job: SonarJob
+    displayName: 'Sonar Scan'
+    steps:
+    - checkout: self
+      fetchDepth: 0
+
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download unit coverage report'
+      inputs:
+        artifactName: 'coverage-report'
+        downloadPath: '$(System.DefaultWorkingDirectory)'
+
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download integration coverage report'
+      inputs:
+        artifactName: 'coverage-report-integration'
+        downloadPath: '$(System.DefaultWorkingDirectory)'
+
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '20.x'
+
+    - task: Npm@1
+      displayName: 'npm install + sonar-scanner'
+      inputs:
+        command: custom
+        customCommand: 'install -g sonarqube-scanner'
+
+    - task: Cache@2
+      displayName: 'Cache node_modules'
+      inputs:
+        key: 'npm | "$(Agent.OS)" | package-lock.json'
+        path: '$(System.DefaultWorkingDirectory)/node_modules'
+        cacheHitVar: 'CACHE_RESTORED'
+
+    - task: Npm@1
+      displayName: 'npm install'
+      condition: ne(variables.CACHE_RESTORED, 'true')
+      inputs:
+        command: install
+
+    - script: |
+        ls -la $(System.DefaultWorkingDirectory)/coverage-report/
+        ls -la $(System.DefaultWorkingDirectory)/coverage-report-integration/
+        sonar-scanner \
+          -Dsonar.host.url=$SONAR_HOST_URL \
+          -Dsonar.token=$SONAR_TOKEN \
+          -Dsonar.javascript.lcov.reportPaths=$(System.DefaultWorkingDirectory)/coverage-report/lcov.info,$(System.DefaultWorkingDirectory)/coverage-report-integration/lcov.info \
+          -Dsonar.qualitygate.wait=true
+      displayName: 'SonarQube Scan'
+      env:
+        SONAR_HOST_URL: $(SONAR_HOST_URL)
+        SONAR_TOKEN: $(SONAR_TOKEN)
+
+# ─────────────────────────────────────────────
+# STAGE 8 : Docker Build
+# ─────────────────────────────────────────────
+- stage: DockerBuild
+  displayName: 'Docker Build (multi-platform OCI)'
+  dependsOn: Sonar
+  variables:
+    IMAGE: crformation.azurecr.io/devops-formation-frontend:$(BRANCH_SLUG)-$(SHORT_SHA)
+  jobs:
+  - job: DockerBuildJob
+    displayName: 'Buildx Multi-Platform → OCI artifact'
+    steps:
+    - script: |
+        SHORT_SHA=$(echo $(Build.SourceVersion) | cut -c1-7)
+        echo "##vso[task.setvariable variable=SHORT_SHA]$SHORT_SHA"
+      displayName: 'Set SHORT_SHA'
+
+    - task: AzureCLI@2
+      displayName: 'ACR Login (for buildx cache)'
+      inputs:
+        azureSubscription: 'sc-formation-devops-acr'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login --name crformation
+
+    - script: |
+        docker buildx create --use --name multiplatform
+        docker buildx build \
+          --platform linux/amd64,linux/arm64 \
+          --tag $(IMAGE) \
+          --cache-from type=registry,ref=crformation.azurecr.io/devops-formation-frontend:buildcache \
+          --cache-to type=registry,ref=crformation.azurecr.io/devops-formation-frontend:buildcache,mode=max \
+          --output type=oci,dest=$(Build.ArtifactStagingDirectory)/image.tar \
+          .
+      displayName: 'Docker Buildx Build → OCI tar'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Artifact - image.tar (OCI)'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/image.tar'
+        ArtifactName: 'docker-image'
+
+# ─────────────────────────────────────────────
+# STAGE 9 : Trivy Security Scan
+# ─────────────────────────────────────────────
+- stage: Trivy
+  displayName: 'Trivy Security Scan'
+  dependsOn: DockerBuild
+  variables:
+    IMAGE: crformation.azurecr.io/devops-formation-frontend:$(BRANCH_SLUG)-$(SHORT_SHA)
+  jobs:
+  - job: TrivyJob
+    displayName: 'Trivy Scan'
+    steps:
+    - script: |
+        SHORT_SHA=$(echo $(Build.SourceVersion) | cut -c1-7)
+        echo "##vso[task.setvariable variable=SHORT_SHA]$SHORT_SHA"
+      displayName: 'Set SHORT_SHA'
+
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download image.tar'
+      inputs:
+        artifactName: 'docker-image'
+        downloadPath: '$(Build.ArtifactStagingDirectory)'
+
+    - script: |
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+          | sh -s -- -b /usr/local/bin
+        mkdir -p $(Build.ArtifactStagingDirectory)/oci-layout
+        tar -xf $(Build.ArtifactStagingDirectory)/docker-image/image.tar \
+          -C $(Build.ArtifactStagingDirectory)/oci-layout
+        trivy image \
+          --input $(Build.ArtifactStagingDirectory)/oci-layout \
+          --severity HIGH,CRITICAL \
+          --no-progress \
+          --format json \
+          --output $(Build.ArtifactStagingDirectory)/trivy-report.json
+        trivy image \
+          --input $(Build.ArtifactStagingDirectory)/oci-layout \
+          --exit-code 1 \
+          --severity HIGH,CRITICAL \
+          --no-progress \
+          --format table
+      displayName: 'Trivy - Scan OCI archive (fail on HIGH/CRITICAL)'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Artifact - trivy-report.json'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/trivy-report.json'
+        ArtifactName: 'trivy-report'
+
+# ─────────────────────────────────────────────
+# STAGE 10 : Push → ACR
+# ─────────────────────────────────────────────
+- stage: Push
+  displayName: 'Push to ACR'
+  dependsOn: Trivy
+  variables:
+    IMAGE: crformation.azurecr.io/devops-formation-frontend:$(BRANCH_SLUG)-$(SHORT_SHA)
+  jobs:
+  - job: PushJob
+    displayName: 'Push OCI Image → ACR'
+    steps:
+    - script: |
+        SHORT_SHA=$(echo $(Build.SourceVersion) | cut -c1-7)
+        echo "##vso[task.setvariable variable=SHORT_SHA]$SHORT_SHA"
+      displayName: 'Set SHORT_SHA'
+
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download image.tar'
+      inputs:
+        artifactName: 'docker-image'
+        downloadPath: '$(Build.ArtifactStagingDirectory)'
+
+    - task: AzureCLI@2
+      displayName: 'Skopeo Push OCI → ACR'
+      inputs:
+        azureSubscription: 'sc-formation-devops-acr'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login --name crformation
+          skopeo copy \
+            oci-archive:$(Build.ArtifactStagingDirectory)/docker-image/image.tar \
+            docker://$(IMAGE)
+
+# ─────────────────────────────────────────────
+# STAGE 11 : Push Helm chart → ACR (OCI)
+# ─────────────────────────────────────────────
+- stage: HelmPush
+  displayName: 'Push Helm Chart'
+  dependsOn: Push
+  jobs:
+  - job: HelmPushJob
+    displayName: 'Package & Push Helm Chart'
+    steps:
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: 'Helm Package & Push → ACR'
+      inputs:
+        azureSubscription: 'sc-formation-devops-acr'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login --name crformation
+          helm package ./helm/front
+          helm push front-*.tgz oci://crformation.azurecr.io/helm
