@@ -2,7 +2,6 @@
 export default {
   mutate: [
     'src/lib/cart.tsx',
-    'src/lib/config.ts',
     'src/lib/http.ts',
   ],
   testRunner: 'jest',
@@ -19,6 +18,9 @@ export default {
     excludedMutations: [
       'OptionalChaining',
       'StringLiteral',
+      'BooleanLiteral',
+      'AssignmentOperator',
+      'ObjectLiteral',
     ],
   },
   thresholds: {

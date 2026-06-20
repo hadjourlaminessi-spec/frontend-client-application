@@ -17,28 +17,9 @@ variables:
 stages:
 
 # ─────────────────────────────────────────────
-# STAGE 1 : Gitleaks (Marketplace)
-# ─────────────────────────────────────────────
-- stage: Gitleaks
-  displayName: 'Gitleaks – Secret Scanning'
-  jobs:
-  - job: GitleaksJob
-    steps:
-    - checkout: self
-      fetchDepth: 0
-
-    - task: Gitleaks@3
-      inputs:
-        scanlocation: '$(Build.SourcesDirectory)'
-        configtype: 'predefined'
-        predefinedconfigfile: 'GitleaksUdmCombo.toml'
-        reportformat: 'sarif'
-
-# ─────────────────────────────────────────────
-# STAGE 2 : Install & Lint
+# STAGE 1 : Install & Lint
 # ─────────────────────────────────────────────
 - stage: Lint
-  dependsOn: Gitleaks
   jobs:
   - job: LintJob
     steps:
@@ -64,11 +45,30 @@ stages:
         customCommand: 'run lint'
 
 # ─────────────────────────────────────────────
+# STAGE 2 : Gitleaks (Marketplace)
+# ─────────────────────────────────────────────
+- stage: Gitleaks
+  displayName: 'Gitleaks – Secret Scanning'
+  dependsOn: Lint
+  jobs:
+  - job: GitleaksJob
+    steps:
+    - checkout: self
+      fetchDepth: 0
+
+    - task: Gitleaks@3
+      inputs:
+        scanlocation: '$(Build.SourcesDirectory)'
+        configtype: 'predefined'
+        predefinedconfigfile: 'GitleaksUdmCombo.toml'
+        reportformat: 'sarif'
+
+# ─────────────────────────────────────────────
 # STAGE 3 : OWASP Dependency Audit (npm audit)
 # ─────────────────────────────────────────────
 - stage: OWASPAudit
   displayName: 'OWASP – Dependency Audit'
-  dependsOn: Gitleaks
+  dependsOn: Lint
   jobs:
   - job: AuditJob
     displayName: 'npm audit'
@@ -240,7 +240,7 @@ stages:
       displayName: 'Stryker - Mutation Testing'
       inputs:
         command: custom
-        customCommand: 'run mutation-test'
+        customCommand: 'run mutation-test -- --incremental'
 
     - task: PublishBuildArtifacts@1
       displayName: 'Artifact - stryker-report'
