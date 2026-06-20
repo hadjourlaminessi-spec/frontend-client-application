@@ -263,9 +263,15 @@ stages:
       fetchDepth: 0
 
     - task: DownloadBuildArtifacts@1
-      displayName: 'Download coverage report'
+      displayName: 'Download unit coverage report'
       inputs:
         artifactName: 'coverage-report'
+        downloadPath: '$(System.DefaultWorkingDirectory)'
+
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download integration coverage report'
+      inputs:
+        artifactName: 'coverage-report-integration'
         downloadPath: '$(System.DefaultWorkingDirectory)'
 
     - task: NodeTool@0
@@ -293,10 +299,11 @@ stages:
 
     - script: |
         ls -la $(System.DefaultWorkingDirectory)/coverage-report/
+        ls -la $(System.DefaultWorkingDirectory)/coverage-report-integration/
         sonar-scanner \
           -Dsonar.host.url=$SONAR_HOST_URL \
           -Dsonar.token=$SONAR_TOKEN \
-          -Dsonar.javascript.lcov.reportPaths=$(System.DefaultWorkingDirectory)/coverage-report/lcov.info \
+          -Dsonar.javascript.lcov.reportPaths=$(System.DefaultWorkingDirectory)/coverage-report/lcov.info,$(System.DefaultWorkingDirectory)/coverage-report-integration/lcov.info \
           -Dsonar.qualitygate.wait=true
       displayName: 'SonarQube Scan'
       env:

@@ -98,6 +98,129 @@ describe("Integration: Catalogue → Panier", () => {
     expect(quantities).toContain("1");
   });
 
+  it("removes a product from cart using the remove button", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Laptop Pro")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getAllByText("Ajouter")[0]);
+
+    await user.click(screen.getByText("Panier"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Laptop Pro")).toBeInTheDocument();
+    });
+
+    // Click the remove button (has destructive color, is a ghost icon button)
+    const removeBtn = document.querySelector(
+      ".btn.btn-ghost.btn-icon"
+    ) as HTMLElement;
+    expect(removeBtn).toBeTruthy();
+    await user.click(removeBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Votre panier est vide")).toBeInTheDocument();
+    });
+  });
+
+  it("decreases quantity using the minus button", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Laptop Pro")).toBeInTheDocument();
+    });
+
+    // Add Laptop Pro twice
+    await user.click(screen.getAllByText("Ajouter")[0]);
+    await waitFor(() => {
+      expect(screen.getByText("Ajouté")).toBeInTheDocument();
+    });
+    await user.click(screen.getByText("Ajouté"));
+
+    await user.click(screen.getByText("Panier"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Laptop Pro")).toBeInTheDocument();
+    });
+
+    // Quantity should be 2
+    const qtyVal = document.querySelector(".qty-val") as HTMLElement;
+    expect(qtyVal.textContent).toBe("2");
+
+    // Click minus button to decrease to 1
+    const minusBtn = screen.getByText("−");
+    await user.click(minusBtn);
+
+    await waitFor(() => {
+      expect(qtyVal.textContent).toBe("1");
+    });
+
+    // Click minus again to remove (qty 0 removes item)
+    await user.click(minusBtn);
+
+    await waitFor(() => {
+      expect(screen.getByText("Votre panier est vide")).toBeInTheDocument();
+    });
+  });
+
+  it("searches products using filters", async () => {
+    const user = userEvent.setup();
+
+    const filtered = [
+      { id: "p1", name: "Laptop Pro", price: 999, category: "Informatique" },
+    ];
+
+    global.fetch = jest.fn().mockImplementation((url: string) => {
+      if (url.includes("localhost:4000")) {
+        // If URL has query params, return filtered results
+        if (url.includes("?")) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            headers: new Headers({ "content-type": "application/json" }),
+            text: () => Promise.resolve(JSON.stringify(filtered)),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ "content-type": "application/json" }),
+          text: () => Promise.resolve(JSON.stringify(products)),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: () => Promise.resolve(JSON.stringify([])),
+      });
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Laptop Pro")).toBeInTheDocument();
+    });
+
+    // Type search term
+    await user.type(screen.getByPlaceholderText("Nom du produit..."), "Laptop");
+
+    // Set min and max price
+    await user.type(screen.getByPlaceholderText("0"), "500");
+    await user.type(screen.getByPlaceholderText("9999"), "1500");
+
+    // Submit search
+    await user.click(screen.getByText("Rechercher"));
+
+    await waitFor(() => {
+      expect(screen.getByText("1 produit disponible")).toBeInTheDocument();
+    });
+  });
+
   it("adds a product and button changes to 'Ajouté'", async () => {
     const user = userEvent.setup();
     render(<App />);

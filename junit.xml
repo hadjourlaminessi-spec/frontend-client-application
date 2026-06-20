@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="19" failures="0" errors="0" time="2.682">
+  <testsuite name="Integration: Payment Page" errors="0" failures="0" skipped="0" timestamp="2026-06-20T14:07:20" time="0.938" tests="2">
+    <testcase classname="Integration: Payment Page navigates to payments page and displays transactions" name="Integration: Payment Page navigates to payments page and displays transactions" time="0.233">
+    </testcase>
+    <testcase classname="Integration: Payment Page shows error when payment service is unavailable" name="Integration: Payment Page shows error when payment service is unavailable" time="0.094">
+    </testcase>
+  </testsuite>
+  <testsuite name="Integration: Commande → Paiement" errors="0" failures="0" skipped="0" timestamp="2026-06-20T14:07:20" time="1.258" tests="3">
+    <testcase classname="Integration: Commande → Paiement pays an order successfully and status changes to Payée" name="Integration: Commande → Paiement pays an order successfully and status changes to Payée" time="0.334">
+    </testcase>
+    <testcase classname="Integration: Commande → Paiement shows error when payment fails (500 - service unavailable)" name="Integration: Commande → Paiement shows error when payment fails (500 - service unavailable)" time="0.191">
+    </testcase>
+    <testcase classname="Integration: Commande → Paiement navigates directly to orders page and pays a CREATED order" name="Integration: Commande → Paiement navigates directly to orders page and pays a CREATED order" time="0.119">
+    </testcase>
+  </testsuite>
+  <testsuite name="Integration: Panier → Commande" errors="0" failures="0" skipped="0" timestamp="2026-06-20T14:07:20" time="1.267" tests="3">
+    <testcase classname="Integration: Panier → Commande creates an order from cart and navigates to orders page with CREATED status" name="Integration: Panier → Commande creates an order from cart and navigates to orders page with CREATED status" time="0.356">
+    </testcase>
+    <testcase classname="Integration: Panier → Commande shows an error when order creation fails" name="Integration: Panier → Commande shows an error when order creation fails" time="0.158">
+    </testcase>
+    <testcase classname="Integration: Panier → Commande clears the cart after successful order creation" name="Integration: Panier → Commande clears the cart after successful order creation" time="0.141">
+    </testcase>
+  </testsuite>
+  <testsuite name="Integration: Catalogue → Panier" errors="0" failures="0" skipped="0" timestamp="2026-06-20T14:07:20" time="1.507" tests="6">
+    <testcase classname="Integration: Catalogue → Panier adds a product from catalog and sees it in cart with correct price" name="Integration: Catalogue → Panier adds a product from catalog and sees it in cart with correct price" time="0.265">
+    </testcase>
+    <testcase classname="Integration: Catalogue → Panier adds multiple products and verifies quantities in cart" name="Integration: Catalogue → Panier adds multiple products and verifies quantities in cart" time="0.147">
+    </testcase>
+    <testcase classname="Integration: Catalogue → Panier removes a product from cart using the remove button" name="Integration: Catalogue → Panier removes a product from cart using the remove button" time="0.117">
+    </testcase>
+    <testcase classname="Integration: Catalogue → Panier decreases quantity using the minus button" name="Integration: Catalogue → Panier decreases quantity using the minus button" time="0.15">
+    </testcase>
+    <testcase classname="Integration: Catalogue → Panier searches products using filters" name="Integration: Catalogue → Panier searches products using filters" time="0.174">
+    </testcase>
+    <testcase classname="Integration: Catalogue → Panier adds a product and button changes to &apos;Ajouté&apos;" name="Integration: Catalogue → Panier adds a product and button changes to &apos;Ajouté&apos;" time="0.038">
+    </testcase>
+  </testsuite>
+  <testsuite name="Integration: Admin Products" errors="0" failures="0" skipped="0" timestamp="2026-06-20T14:07:20" time="1.667" tests="5">
+    <testcase classname="Integration: Admin Products navigates to admin page, creates a product and sees it in the list" name="Integration: Admin Products navigates to admin page, creates a product and sees it in the list" time="0.35">
+    </testcase>
+    <testcase classname="Integration: Admin Products navigates to admin page and deletes a product" name="Integration: Admin Products navigates to admin page and deletes a product" time="0.064">
+    </testcase>
+    <testcase classname="Integration: Admin Products shows error when product creation fails" name="Integration: Admin Products shows error when product creation fails" time="0.166">
+    </testcase>
+    <testcase classname="Integration: Admin Products shows error when delete fails" name="Integration: Admin Products shows error when delete fails" time="0.052">
+    </testcase>
+    <testcase classname="Integration: Admin Products shows error when catalog service returns an error" name="Integration: Admin Products shows error when catalog service returns an error" time="0.03">
+    </testcase>
+  </testsuite>
+</testsuites>

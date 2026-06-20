@@ -59,14 +59,9 @@
     "collectCoverageFrom": [
       "src/lib/api.ts",
       "src/lib/cart.tsx",
-      "src/lib/config.ts",
-      "src/lib/formatters.ts",
-      "src/lib/http.ts",
-      "src/services/keycloak.ts",
-      "src/components/pages/*.tsx",
-      "src/components/layout/Sidebar.tsx",
-      "src/App.tsx"
+      "src/lib/config.ts"
     ],
+    "coverageReporters": ["text", "lcov", "html"],
     "coverageThreshold": {
       "global": {
         "branches": 80,

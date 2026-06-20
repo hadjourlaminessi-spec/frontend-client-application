@@ -2,7 +2,7 @@
 export default {
   mutate: [
     'src/lib/cart.tsx',
-    'src/lib/http.ts',
+    'src/lib/api.ts',
   ],
   testRunner: 'jest',
   jest: {
