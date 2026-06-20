@@ -2,8 +2,8 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install
+COPY package.json package-lock.json ./
+RUN npm ci
 ENV NODE_ENV=development
 COPY . .
 RUN npm run build
