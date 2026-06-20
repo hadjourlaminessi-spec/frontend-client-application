@@ -372,14 +372,17 @@ stages:
     - script: |
         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
           | sh -s -- -b /usr/local/bin
+        mkdir -p $(Build.ArtifactStagingDirectory)/oci-layout
+        tar -xf $(Build.ArtifactStagingDirectory)/docker-image/image.tar \
+          -C $(Build.ArtifactStagingDirectory)/oci-layout
         trivy image \
-          --input $(Build.ArtifactStagingDirectory)/docker-image/image.tar \
+          --input $(Build.ArtifactStagingDirectory)/oci-layout \
           --severity HIGH,CRITICAL \
           --no-progress \
           --format json \
           --output $(Build.ArtifactStagingDirectory)/trivy-report.json
         trivy image \
-          --input $(Build.ArtifactStagingDirectory)/docker-image/image.tar \
+          --input $(Build.ArtifactStagingDirectory)/oci-layout \
           --exit-code 1 \
           --severity HIGH,CRITICAL \
           --no-progress \
