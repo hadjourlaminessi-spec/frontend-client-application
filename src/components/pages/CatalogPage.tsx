@@ -8,13 +8,7 @@ import CartPlusIcon from "../icons/CartPlusIcon";
 import CheckIcon from "../icons/CheckIcon";
 import PackageIcon from "../icons/PackageIcon";
 import { AlertIcon } from "../icons";
-
-function fmt(n: number) {
-  return new Intl.NumberFormat("fr-FR", {
-    style: "currency",
-    currency: "EUR",
-  }).format(n);
-}
+import { fmt } from "../../lib/formatters";
 
 const categoryColors: Record<string, string> = {
   Informatique: "badge-primary",

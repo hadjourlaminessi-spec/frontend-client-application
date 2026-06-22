@@ -18,22 +18,7 @@ import {
   BoxIcon,
 } from "../../components/icons";
 import { useCart } from "../../lib/cart";
-
-function fmt(n: number) {
-  return new Intl.NumberFormat("fr-FR", {
-    style: "currency",
-    currency: "EUR",
-  }).format(n);
-}
-function fmtDate(s: string | undefined) {
-  if (!s) return "—";
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("fr-FR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(d);
-}
+import { fmt, fmtDate } from "../../lib/formatters";
 
 const StatusBadge = ({ status }: { status: Order["status"] }) => {
   const map = {

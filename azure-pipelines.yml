@@ -1,37 +1,314 @@
 trigger:
-  branches:
-    include:
-      - '*'
+- main
 
 pr:
   branches:
     include:
-      - '*'
+    - '*'
 
 pool:
   vmImage: ubuntu-latest
 
-jobs:
-  - job: checkout_metadata
-    displayName: Checkout & Export Metadata
+variables:
+- group: variable
+
+stages:
+
+# ─────────────────────────────────────────────
+# STAGE 1 : Gitleaks (CLI)
+# ─────────────────────────────────────────────
+- stage: Gitleaks
+  displayName: 'Gitleaks – Secret Scanning'
+  jobs:
+  - job: GitleaksJob
     steps:
-      - checkout: self
-        fetchDepth: 0
+    - checkout: self
+      fetchDepth: 0
 
-      - bash: |
-          SHORT_SHA=$(git rev-parse --short=7 HEAD)
-          RAW_BRANCH="${BUILD_SOURCEBRANCH}"
-          # Strip refs/heads/ or refs/pull/.../merge
-          BRANCH_NAME="${RAW_BRANCH#refs/heads/}"
-          BRANCH_NAME="${BRANCH_NAME#refs/pull/}"
-          BRANCH_NAME="${BRANCH_NAME%/merge}"
-          # Slugify: lowercase, replace non-alphanumeric with dash, trim dashes
-          BRANCH_SLUG=$(echo "$BRANCH_NAME" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-//;s/-$//')
+    - script: |
+        set -e
 
-          echo "##vso[task.setvariable variable=SHORT_SHA;isOutput=true]$SHORT_SHA"
-          echo "##vso[task.setvariable variable=BRANCH_SLUG;isOutput=true]$BRANCH_SLUG"
+        GITLEAKS_VERSION="8.18.0"
 
-          echo "SHORT_SHA  : $SHORT_SHA"
-          echo "BRANCH_SLUG: $BRANCH_SLUG"
-        name: set_metadata
-        displayName: Compute and export SHORT_SHA & BRANCH_SLUG
+        wget -q https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz
+
+        tar -xzf gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz
+
+        chmod +x gitleaks
+
+        ./gitleaks detect --source . --verbose --exit-code 1
+      displayName: 'Run Gitleaks (fixed install)'
+
+# ─────────────────────────────────────────────
+# STAGE 2 : Install & Lint
+# ─────────────────────────────────────────────
+- stage: Lint
+  dependsOn: Gitleaks
+  jobs:
+  - job: LintJob
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '20.x'
+
+    - task: Npm@1
+      inputs:
+        command: install
+
+    - task: Npm@1
+      inputs:
+        command: custom
+        customCommand: 'run lint'
+
+# ─────────────────────────────────────────────
+# STAGE 3 : Unit Tests
+# ─────────────────────────────────────────────
+- stage: UnitTests
+  dependsOn: Lint
+  jobs:
+  - job: UnitTestsJob
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '20.x'
+
+    - task: Npm@1
+      inputs:
+        command: install
+
+    - task: Npm@1
+      inputs:
+        command: custom
+        customCommand: 'test -- --ci --reporters=default --reporters=jest-junit'
+      env:
+        CI: 'true'
+        JEST_JUNIT_OUTPUT_DIR: '$(System.DefaultWorkingDirectory)/test-results'
+        JEST_JUNIT_OUTPUT_NAME: 'junit.xml'
+
+    - task: PublishTestResults@2
+      condition: always()
+      inputs:
+        testResultsFormat: JUnit
+        testResultsFiles: '**/test-results/junit.xml'
+
+    - task: PublishBuildArtifacts@1
+      condition: always()
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/coverage'
+        ArtifactName: 'coverage-report'
+
+# ─────────────────────────────────────────────
+# STAGE 4 : Mutation Tests (Stryker)
+# ─────────────────────────────────────────────
+- stage: MutationTests
+  displayName: 'Mutation Tests'
+  dependsOn: UnitTests
+  jobs:
+  - job: MutationTestsJob
+    displayName: 'Run Mutation Tests'
+    steps:
+    - task: NodeTool@0
+      displayName: 'Use Node.js 20.x'
+      inputs:
+        versionSpec: '20.x'
+
+    - task: Npm@1
+      displayName: 'npm install'
+      inputs:
+        command: install
+
+    - task: Npm@1
+      displayName: 'Stryker - Mutation Testing'
+      inputs:
+        command: custom
+        customCommand: 'run mutation-test'
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Artifact - stryker-report'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(System.DefaultWorkingDirectory)/reports/mutation/mutation.html'
+        ArtifactName: 'mutation-test-report'
+
+# ─────────────────────────────────────────────
+# STAGE 5 : OWASP Dependency Check (CLI)
+# ─────────────────────────────────────────────
+# Désactivé – nécessite la tâche marketplace dependency-check-build-task@6
+
+# ─────────────────────────────────────────────
+# STAGE 6 : SonarQube (CLI version)
+# ─────────────────────────────────────────────
+- stage: Sonar
+  displayName: 'SonarQube Analysis'
+  dependsOn: MutationTests
+  jobs:
+  - job: SonarJob
+    displayName: 'Sonar Scan'
+    steps:
+    - checkout: self
+      fetchDepth: 0
+
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download coverage report'
+      inputs:
+        artifactName: 'coverage-report'
+        downloadPath: '$(System.DefaultWorkingDirectory)'
+
+    - task: NodeTool@0
+      inputs:
+        versionSpec: '20.x'
+
+    - task: Npm@1
+      displayName: 'npm install + sonar-scanner'
+      inputs:
+        command: custom
+        customCommand: 'install -g sonarqube-scanner'
+
+    - task: Npm@1
+      displayName: 'npm install'
+      inputs:
+        command: install
+
+    - script: |
+        ls -la $(System.DefaultWorkingDirectory)/coverage-report/
+        sonar-scanner \
+          -Dsonar.host.url=$SONAR_HOST_URL \
+          -Dsonar.token=$SONAR_TOKEN \
+          -Dsonar.javascript.lcov.reportPaths=$(System.DefaultWorkingDirectory)/coverage-report/lcov.info \
+          -Dsonar.qualitygate.wait=true
+      displayName: 'SonarQube Scan'
+      env:
+        SONAR_HOST_URL: $(SONAR_HOST_URL)
+        SONAR_TOKEN: $(SONAR_TOKEN)
+
+# ─────────────────────────────────────────────
+# STAGE 6 : Docker Build
+# ─────────────────────────────────────────────
+- stage: DockerBuild
+  displayName: 'Docker Build'
+  dependsOn: Sonar
+  variables:
+    IMAGE: crformation.azurecr.io/devops-formation-frontend:$(Build.BuildId)
+  jobs:
+  - job: DockerBuildJob
+    displayName: 'Build & Save Image'
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Docker Build → save tar'
+      inputs:
+        azureSubscription: 'sc-formation-devops-acr'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login --name crformation
+          docker build -t $(IMAGE) .
+          docker save $(IMAGE) -o $(Build.ArtifactStagingDirectory)/image.tar
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Artifact - image.tar'
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/image.tar'
+        ArtifactName: 'docker-image'
+
+# ─────────────────────────────────────────────
+# STAGE 8 : Trivy Security Scan
+# ─────────────────────────────────────────────
+- stage: Trivy
+  displayName: 'Trivy Security Scan'
+  dependsOn: DockerBuild
+  variables:
+    IMAGE: crformation.azurecr.io/devops-formation-frontend:$(Build.BuildId)
+  jobs:
+  - job: TrivyJob
+    displayName: 'Trivy Scan'
+    steps:
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download image.tar'
+      inputs:
+        artifactName: 'docker-image'
+        downloadPath: '$(Build.ArtifactStagingDirectory)'
+
+    - script: docker load -i $(Build.ArtifactStagingDirectory)/docker-image/image.tar
+      displayName: 'Docker Load Image'
+
+    - script: |
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+          | sh -s -- -b /usr/local/bin
+        trivy image \
+          --exit-code 1 \
+          --severity HIGH,CRITICAL \
+          --no-progress \
+          --format table \
+          $(IMAGE)
+      displayName: 'Trivy - Scan (fail on HIGH/CRITICAL)'
+
+    - script: |
+        trivy image \
+          --exit-code 0 \
+          --severity HIGH,CRITICAL \
+          --no-progress \
+          --format json \
+          --output $(Build.ArtifactStagingDirectory)/trivy-report.json \
+          $(IMAGE)
+      displayName: 'Trivy - Export JSON Report'
+      condition: always()
+
+    - task: PublishBuildArtifacts@1
+      displayName: 'Artifact - trivy-report.json'
+      condition: always()
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)/trivy-report.json'
+        ArtifactName: 'trivy-report'
+
+# ─────────────────────────────────────────────
+# STAGE 9 : Push → ACR
+# ─────────────────────────────────────────────
+- stage: Push
+  displayName: 'Push to ACR'
+  dependsOn: Trivy
+  #condition: and(succeeded(), eq(variables['Build.Reason'], 'IndividualCI'))
+  variables:
+    IMAGE: crformation.azurecr.io/devops-formation-frontend:$(Build.BuildId)
+  jobs:
+  - job: PushJob
+    displayName: 'Push Docker Image'
+    steps:
+    - task: DownloadBuildArtifacts@1
+      displayName: 'Download image.tar'
+      inputs:
+        artifactName: 'docker-image'
+        downloadPath: '$(Build.ArtifactStagingDirectory)'
+
+    - task: AzureCLI@2
+      displayName: 'Docker Load & Push → ACR'
+      inputs:
+        azureSubscription: 'sc-formation-devops-acr'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          docker load -i $(Build.ArtifactStagingDirectory)/docker-image/image.tar
+          az acr login --name crformation
+          docker push $(IMAGE)
+
+# ─────────────────────────────────────────────
+# STAGE 10 : Push Helm chart → ACR (OCI)
+# ─────────────────────────────────────────────
+- stage: HelmPush
+  displayName: 'Push Helm Chart'
+  dependsOn: Push
+  jobs:
+  - job: HelmPushJob
+    displayName: 'Package & Push Helm Chart'
+    steps:
+    - checkout: self
+
+    - task: AzureCLI@2
+      displayName: 'Helm Package & Push → ACR'
+      inputs:
+        azureSubscription: 'sc-formation-devops-acr'
+        scriptType: bash
+        scriptLocation: inlineScript
+        inlineScript: |
+          az acr login --name crformation
+          helm package ./helm/front
+          helm push front-*.tgz oci://crformation.azurecr.io/helm

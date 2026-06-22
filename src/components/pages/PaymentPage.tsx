@@ -7,22 +7,7 @@ import {
   CrossIcon,
 } from "../../components/icons";
 import { Payment } from "../../types/api";
-
-function fmt(n: number) {
-  return new Intl.NumberFormat("fr-FR", {
-    style: "currency",
-    currency: "EUR",
-  }).format(n);
-}
-function fmtDate(s: string | undefined) {
-  if (!s) return "—";
-  const d = new Date(s);
-  if (isNaN(d.getTime())) return "—";
-  return new Intl.DateTimeFormat("fr-FR", {
-    dateStyle: "short",
-    timeStyle: "short",
-  }).format(d);
-}
+import { fmt, fmtDate } from "../../lib/formatters";
 
 export default function PaymentPage() {
   const [payments, setPayments] = useState<Payment[]>([]);
